@@ -1,8 +1,8 @@
-# X Proxy Tool
+# Vproxy
 
-<img src="assets/logo.png" alt="X Proxy Tool Icon" width="50"/>
+<img src="assets/logo.png" alt="Vproxy Icon" width="50"/>
 
-[X Proxy Tool](https://xproxy.5vnetwork.com) is an easy-to-use, multi-platform proxy client.
+[Vproxy](https://vproxy.5vnetwork.com) is an easy-to-use, multi-platform proxy client.
 
 
 ### License Compliance
