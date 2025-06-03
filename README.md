@@ -13,9 +13,9 @@ Vproxy获取订阅的方式与其他代理客户端一样：从订阅链接Get�
 ## 深度链接说明
 Vproxy支持用深度链接快捷导入订阅到客户端。深度链接的scheme为"vproxy"。目前支持两种格式：
 
-1. vproxy://add/sub://<u>aHR0cHM6Ly9leGFtcGxlLmNvbS9hYmNk</u>?remarks=%E6%9C%BA%E5%9C%BA%0A
+1. vproxy://add/sub://<ins>aHR0cHM6Ly9leGFtcGxlLmNvbS9hYmNk</ins>?remarks=%E6%9C%BA%E5%9C%BA%0A
 
-   下划线为base64编码的订阅地址，解码后为"https://example.com/abcd"。  
+   下划线为base64编码的订阅地址，解码后为"https://example.com/abcd"  
    "remarks"：订阅的名称。  
 
 2. vproxy://install-config?url=https%3A%2F%2Fexample.com%2Fabcd&name=%E6%9C%BA%E5%9C%BA%0A
