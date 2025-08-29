@@ -17,7 +17,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          persist-credentials: false
+          persist-credentials: false # 不持久化默认凭证，后续使用PAT
           fetch-depth: 0
 
       # 2️⃣ 安装必要工具
@@ -38,7 +38,15 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      # 4️⃣ 备份工作流文件
+      # 4️⃣ 获取默认分支
+      - name: Get default branch
+        id: get_default_branch
+        run: |
+          default_branch=$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
+          echo "Default branch: $default_branch"
+          echo "default_branch=$default_branch" >> $GITHUB_OUTPUT
+
+      # 5️⃣ 备份工作流文件
       - name: Backup workflow files
         run: |
           mkdir -p /tmp/backup
@@ -50,7 +58,7 @@ jobs:
             echo "No sync workflow found to backup"
           fi
 
-      # 4.5️⃣ 删除所有可能导致问题的工作流文件
+      # 6️⃣ 删除所有可能导致问题的工作流文件
       - name: Remove problematic workflow files
         run: |
           # 删除所有可能触发构建的工作流文件
@@ -67,7 +75,7 @@ jobs:
           sed -i '/android_keystore/d' android/app/build.gradle 2>/dev/null || true
           echo "Removed Android config files"
 
-      # 5️⃣ 添加上游仓库并获取所有内容
+      # 7️⃣ 添加上游仓库并获取所有内容
       - name: Add upstream and fetch
         run: |
           git remote remove upstream 2>/dev/null || true
@@ -75,11 +83,11 @@ jobs:
           git fetch upstream --tags --force --prune
           git fetch upstream --force --prune '+refs/heads/*:refs/remotes/upstream/*'
 
-      # 6️⃣ 同步所有分支（保留工作流文件）
+      # 8️⃣ 同步所有分支（保留工作流文件）
       - name: Sync branches with workflow preservation
         run: |
-          # 获取默认分支名称
-          default_branch=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5 || echo "main")
+          # 使用之前获取的默认分支
+          default_branch=${{ steps.get_default_branch.outputs.default_branch }}
           echo "Default branch: $default_branch"
           
           # 获取上游所有分支
@@ -124,12 +132,12 @@ jobs:
               git checkout -b $branch_name upstream/$branch_name
             fi
             
-            # 推送到 origin - 使用认证信息
+            # 推送到 origin - 使用PAT认证信息
             echo "Pushing $branch_name to origin"
-            git push https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git $branch_name --force
+            git push https://${{ github.actor }}:${{ secrets.SYNC_PAT }}@github.com/${{ github.repository }}.git $branch_name --force
           done
 
-      # 7️⃣ 同步所有标签（跳过包含工作流文件的标签）
+      # 9️⃣ 同步所有标签（跳过包含工作流文件的标签）
       - name: Sync tags selectively
         run: |
           # 删除所有本地标签（避免冲突）
@@ -144,24 +152,24 @@ jobs:
               echo "Skipping tag $tag (contains workflow files)"
             else
               echo "Pushing tag $tag"
-              git push https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git $tag --force || echo "Failed to push tag $tag"
+              git push https://${{ github.actor }}:${{ secrets.SYNC_PAT }}@github.com/${{ github.repository }}.git $tag --force || echo "Failed to push tag $tag"
             fi
           done
 
-      # 8️⃣ 获取上游发布列表和本地发布列表，并检测需要同步的发布
+      # 🔟 获取上游发布列表和本地发布列表，并检测需要同步的发布
       - name: Get release lists and detect changes
         id: get_releases
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SYNC_PAT: ${{ secrets.SYNC_PAT }} # 使用PAT替代GITHUB_TOKEN
         run: |
           # 获取上游所有发布（按创建时间排序）
           echo "Getting upstream releases..."
-          upstream_releases_json=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+          upstream_releases_json=$(curl -s -H "Authorization: token $SYNC_PAT" \
             "https://api.github.com/repos/5VNetwork/vproxy/releases?per_page=100")
           
           # 获取本地所有发布（按创建时间排序）
           echo "Getting local releases..."
-          local_releases_json=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+          local_releases_json=$(curl -s -H "Authorization: token $SYNC_PAT" \
             "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100")
           
           # 找出需要同步的新发布或需要更新的发布
@@ -232,7 +240,7 @@ jobs:
             echo "releases_to_sync=" >> $GITHUB_OUTPUT
           fi
 
-      # 9️⃣ 下载需要同步的发布资源
+      # 1️⃣1️⃣ 下载需要同步的发布资源
       - name: Download release assets
         if: steps.get_releases.outputs.releases_to_sync != ''
         run: |
@@ -248,7 +256,7 @@ jobs:
             echo "Processing release: $tag_name (action: $action)"
             
             # 获取发布详情
-            release_info_json=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            release_info_json=$(curl -s -H "Authorization: token ${{ secrets.SYNC_PAT }}" \
               "https://api.github.com/repos/5VNetwork/vproxy/releases/tags/$tag_name")
             
             # 检查是否有错误
@@ -287,12 +295,38 @@ jobs:
             sleep 2
           done
 
-      # 🔟 按照上游创建时间顺序创建或更新 GitHub Releases
+      # 1️⃣2️⃣ 确保标签在本地存在
+      - name: Ensure tags exist locally
+        if: steps.get_releases.outputs.releases_to_sync != ''
+        run: |
+          releases_to_sync="${{ steps.get_releases.outputs.releases_to_sync }}"
+          
+          # 获取所有需要同步的标签
+          for release_info in $releases_to_sync; do
+            tag_name=$(echo "$release_info" | cut -d':' -f1)
+            
+            # 检查标签是否在本地存在
+            if ! git show-ref --tags | grep -q "refs/tags/$tag_name"; then
+              echo "Tag $tag_name does not exist locally, fetching from upstream..."
+              # 从上游获取特定标签
+              git fetch upstream tag $tag_name
+              # 将标签推送到origin
+              git push https://${{ github.actor }}:${{ secrets.SYNC_PAT }}@github.com/${{ github.repository }}.git $tag_name --force
+            else
+              echo "Tag $tag_name exists locally"
+            fi
+          done
+
+      # 1️⃣3️⃣ 按照上游创建时间顺序创建或更新 GitHub Releases
       - name: Create or update GitHub Releases in order
         if: steps.get_releases.outputs.releases_to_sync != ''
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_PAT }} # 使用PAT替代GITHUB_TOKEN
         run: |
+          # 获取默认分支
+          default_branch=${{ steps.get_default_branch.outputs.default_branch }}
+          echo "Default branch: $default_branch"
+          
           releases_to_sync="${{ steps.get_releases.outputs.releases_to_sync }}"
           
           # 首先，收集所有需要创建的发布的信息（标签名、创建时间和操作类型）
@@ -361,19 +395,27 @@ jobs:
                     draft_flag="--draft"
                   fi
                   
+                  # 获取标签对应的提交哈希
+                  target_commitish=$(git rev-list -n 1 "$tag_name" 2>/dev/null || echo "")
+                  if [ -z "$target_commitish" ]; then
+                    echo "Warning: Could not find commit for tag $tag_name, using default branch: $default_branch"
+                    target_commitish="$default_branch"
+                  fi
+                  
+                  # 创建发布 - 使用动态获取的默认分支
                   if [ -n "$release_name" ] && [ "$release_name" != "null" ]; then
                     gh release create --repo ${{ github.repository }} "$tag_name" \
                       --title "$release_name" \
                       --notes "$release_notes" \
                       $prerelease_flag \
                       $draft_flag \
-                      --target main || echo "Release $tag_name may already exist"
+                      --target "$target_commitish" || echo "Release $tag_name may already exist, will try to update"
                   else
                     gh release create --repo ${{ github.repository }} "$tag_name" \
                       --notes "$release_notes" \
                       $prerelease_flag \
                       $draft_flag \
-                      --target main || echo "Release $tag_name may already exist"
+                      --target "$target_commitish" || echo "Release $tag_name may already exist, will try to update"
                   fi
                   
                   # 上传资产文件
@@ -496,13 +538,13 @@ jobs:
             sleep 5
           done
 
-      # 清理下载的资源
+      # 1️⃣4️⃣ 清理下载的资源
       - name: Clean up downloaded assets
         run: |
           rm -rf releases
           echo "Cleaned up downloaded assets"
 
-      # 发送完成通知
+      # 1️⃣5️⃣ 发送完成通知
       - name: Notify on completion
         run: |
           releases_to_sync="${{ steps.get_releases.outputs.releases_to_sync }}"
